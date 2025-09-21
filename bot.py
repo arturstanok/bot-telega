@@ -16,9 +16,9 @@ GOOGLE_MODEL = os.getenv("GOOGLE_MODEL", "gemini-2.5-flash")
 PROXY_URL = os.getenv("PROXY_URL")
 
 if not BOT_TOKEN:
-    raise RuntimeError("Set BOT_TOKEN in .env")
+    raise RuntimeError("Set BOT_TOKEN environment variable")
 if not GOOGLE_API_KEY:
-    raise RuntimeError("Set GOOGLE_API_KEY in .env")
+    raise RuntimeError("Set GOOGLE_API_KEY environment variable")
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
