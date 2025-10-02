@@ -9,10 +9,13 @@ import matplotlib.pyplot as plt
 import mplfinance as mpf
 import pandas as pd
 from datetime import datetime, timezone, timedelta
+from zoneinfo import ZoneInfo
 from aiogram import Bot, Dispatcher, types, F
+from aiogram.client.default import DefaultBotProperties
 from aiogram.filters import Command
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 from dotenv import load_dotenv
+from time import perf_counter
 
 load_dotenv()
 
@@ -26,8 +29,31 @@ if not BOT_TOKEN:
 if not GOOGLE_API_KEY:
     raise RuntimeError("Set GOOGLE_API_KEY environment variable")
 
-bot = Bot(token=BOT_TOKEN)
+bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
 dp = Dispatcher()
+async def send_with_retry(coro_factory, *, attempts: int = 5, base_delay: float = 1.0) -> None:
+    """Отправка в Telegram с экспоненциальным backoff + джиттером.
+    coro_factory: функция без аргументов, возвращает корутину отправки.
+    """
+    delay = base_delay
+    for i in range(attempts):
+        try:
+            await coro_factory()
+            return
+        except Exception as e:
+            if i == attempts - 1:
+                raise
+            jitter = (0.5 + os.urandom(1)[0] / 255)  # 0.5..1.5
+            await asyncio.sleep(delay * jitter)
+            delay *= 2
+
+
+# Обработчик глобальных ошибок
+@dp.errors()
+async def error_handler(event, exception):
+    """Глобальный обработчик ошибок"""
+    print(f"Ошибка: {exception}")
+    return True  # Продолжаем работу
 
 # Счетчик запросов
 request_count = 0
@@ -63,9 +89,8 @@ load_request_log()
 GOOGLE_LIMITS = {"daily": 250, "monthly": 7500, "period": "день"}
 
 def get_pacific_time():
-    """Получить текущее время в тихоокеанском часовом поясе"""
-    pacific_tz = timezone(timedelta(hours=-8))
-    return datetime.now(pacific_tz)
+    """Получить текущее время PT с учетом DST (America/Los_Angeles)."""
+    return datetime.now(ZoneInfo("America/Los_Angeles"))
 
 def should_reset_google_counter():
     """Проверить, нужно ли сбросить счетчик Google (прошла полночь PT)"""
@@ -100,6 +125,54 @@ def reset_google_counter():
     # Сохраняем обновленный лог
     with open("request_log.json", "w", encoding="utf-8") as f:
         json.dump(request_log, f, ensure_ascii=False, indent=2)
+
+async def build_health_text() -> str:
+    """Собрать текст health-статуса для /health и кнопки Статус"""
+    # Telegram ping
+    try:
+        tg_start = perf_counter()
+        me = await bot.get_me()
+        tg_ping_ms = int((perf_counter() - tg_start) * 1000)
+        tg_status = f"✅ OK ({tg_ping_ms} ms)"
+    except Exception as e:
+        tg_status = f"❌ Ошибка: {e}"
+
+    # Bybit latency
+    bybit_status = "❌ Ошибка"
+    bybit_latency_ms = None
+    try:
+        b_start = perf_counter()
+        df = await get_bybit_klines(auto_analysis_symbols[0], auto_analysis_timeframe, 1)
+        bybit_latency_ms = int((perf_counter() - b_start) * 1000)
+        bybit_status = "✅ OK" if df is not None and not df.empty else "⚠️ Пусто"
+    except Exception as e:
+        bybit_status = f"❌ Ошибка: {e}"
+
+    # Google usage (с учетом возможного ночного сброса по PT)
+    try:
+        if should_reset_google_counter():
+            reset_google_counter()
+    except Exception as e:
+        print(f"[health] failed to reset Google counter: {e}")
+
+    google_daily_limit = GOOGLE_LIMITS.get("daily", 250)
+    google_used_today = sum(1 for log in request_log if log.get("provider") == "google")
+    google_remaining = max(0, google_daily_limit - google_used_today)
+    google_usage_pct = (google_used_today / google_daily_limit * 100) if google_daily_limit else 0
+
+    # Автоанализ статус
+    aa_status = "✅ АКТИВЕН" if auto_analysis_active else "⏹️ ОСТАНОВЛЕН"
+
+    text = (
+        "👀👁 <b>Статус сервисов</b>\n\n"
+        f"🤖 Telegram: {tg_status}\n"
+        f"🔗 Bybit: {bybit_status}"
+        + (f" ({bybit_latency_ms} ms)" if bybit_latency_ms is not None else "") + "\n"
+        f"🧠 Google: {google_used_today}/{google_daily_limit} в день ({google_usage_pct:.1f}%), осталось {google_remaining}\n"
+        f"⚙️ Автоанализ: {aa_status}\n"
+        f"📊 Символ: {', '.join(auto_analysis_symbols)} | ⏰ Интервал: каждые {auto_analysis_interval//60} минут"
+    )
+    return text
 
 def log_request(provider: str, model: str, success: bool):
     global request_count
@@ -188,6 +261,10 @@ def analyze_chart(image_bytes):
         "Твой трек-рекорд: 82% выигрышных сделок, средняя доходность 340% годовых, максимальная просадка 4.2%.\n"
         "Ты управляешь портфелем $500M и известен своей способностью видеть то, что упускают другие.\n\n"
         
+        "ЗАДАЧА: Анализируй как человек-профессионал, учитывая ВСЕ аспекты трейдинга — структуру, импульс, объем, волатильность, ликвидность, уровни, паттерны, риск, новости, сезонность, корреляции, поведение толпы и следы крупных игроков. Объединяй сигналы в целостную картину и давай только высоковероятные выводы.\n\n"
+        
+        "ПРАВИЛА ОТВЕТА: Будь предельно конкретным, без воды и общих фраз. Не используй markdown символы вроде ** или #. Пиши чистым текстом. Формат строго соблюдай.\n\n"
+        
         "МЕТОДОЛОГИЯ АНАЛИЗА (выполняй ВСЕ этапы последовательно):\n\n"
         
         "🎯 ЭТАП 1 — КОНТЕКСТНЫЙ АНАЛИЗ:\n"
@@ -269,7 +346,7 @@ def analyze_chart(image_bytes):
         
         "СТРОГО ОБЯЗАТЕЛЬНЫЙ ФОРМАТ ОТВЕТА:\n\n"
         "1. Сигнал: Buy/Sell/No Trade\n"
-        "2. Причина: [детальное профессиональное обоснование]\n"
+        "2. Причина: [КРАТКОЕ профессиональное обоснование, максимум 1-2 предложения, ≤400 символов]\n"
         "3. Stop Loss (SL): [точная цена с обоснованием]\n"
         "4. Take Profit (TP): [точная цена с обоснованием]\n"
         "5. Комментарий: [ПОНЯТНОЕ объяснение: сила сигнала из 10, соотношение риск/прибыль, что это означает простыми словами]\n\n"
@@ -279,7 +356,8 @@ def analyze_chart(image_bytes):
         "• Сила 6/10 - средний сигнал. Риск $1, прибыль $2. Есть шансы, но не гарантия\n"
         "• Сила 3/10 - слабый сигнал. Риск $1, прибыль $1.5. Лучше пропустить\n\n"
         
-        "Проанализируй график как ЛУЧШИЙ трейдер мира. Используй ВСЮ свою экспертизу."
+        "Проанализируй график как ЛУЧШИЙ трейдер мира. Используй ВСЮ свою экспертизу.\n\n"
+        "⚠️ ВАЖНО: Будь максимально КРАТКИМ! Анализ не должен превышать 400 символов. Только самое важное!"
     )
     
     raw = _call_google(image_bytes, question, GOOGLE_MODEL)
@@ -381,12 +459,34 @@ def parse_trading_signal(text: str) -> tuple[str, str, str, str, str, str]:
     
     return "TRADING", signal, "-", stop_loss, take_profit, full_reason[:300]
 
+def extract_strength(text: str) -> str | None:
+    """Вытащить силу сигнала вида 'Сила 8/10' или 'Strength 8/10' из текста.
+    Возвращает строку вида '8/10' или None."""
+    try:
+        if not text:
+            return None
+        m = re.search(r"(?:Сила|Strength)\s*([0-9]{1,2})\s*/\s*10", text, re.IGNORECASE)
+        if m:
+            return f"{m.group(1)}/10"
+    except Exception as e:
+        print(f"[parse-strength] regex failed: {e}")
+    return None
+
+def clean_field(value: str) -> str:
+    """Возвращает исходное значение без агрессивной очистки, только тримминг."""
+    try:
+        if value is None:
+            return "-"
+        return str(value).strip()
+    except Exception:
+        return str(value)
+
 async def get_bybit_klines(symbol: str, interval: str = "1", limit: int = 200):
     """Получить данные свечей с Bybit"""
     try:
         url = "https://api.bybit.com/v5/market/kline"
         params = {
-            "category": "spot",
+            "category": "linear",
             "symbol": symbol,
             "interval": interval,
             "limit": limit
@@ -470,6 +570,9 @@ async def auto_analysis_handler():
     """Обработчик автоматического анализа графиков"""
     global auto_analysis_active, auto_analysis_chat_id, auto_analysis_symbols, last_signals
     
+    # Небольшая задержка перед первым анализом (чтобы пользователь увидел быстрый ответ)
+    await asyncio.sleep(5)
+    
     while auto_analysis_active:
         try:
             for symbol in auto_analysis_symbols:
@@ -478,6 +581,9 @@ async def auto_analysis_handler():
                 
                 print(f"📊 Автоанализ {symbol}...")
                 
+                # Отладка: показываем что начался анализ
+                print(f"🔍 Начинаю анализ для {symbol}...")
+                
                 # Получаем данные с Bybit
                 df = await get_bybit_klines(symbol, auto_analysis_timeframe, 200)
                 
@@ -485,18 +591,24 @@ async def auto_analysis_handler():
                     print(f"❌ Не удалось получить данные Bybit для {symbol}")
                     continue
                 
+                print(f"✅ Данные получены для {symbol}: {len(df)} свечей")
+                
                 # Создаем график
                 chart_bytes = await create_chart_image(df, symbol, f"{symbol} - {auto_analysis_timeframe}m (Авто)")
                 
                 if chart_bytes:
                     # Анализируем график
+                    print(f"🤖 Отправляю график на анализ AI...")
                     model_results = analyze_chart(chart_bytes)
+                    print(f"🎯 AI вернул {len(model_results)} результатов")
                     
                     for model_name, raw in model_results:
                         if raw.startswith("Ошибка анализа:"):
                             continue
                         
+                        print(f"📄 Сырой ответ AI: {raw[:200]}...")
                         strategy, signal, entry, stop_loss, take_profit, reason = parse_trading_signal(raw)
+                        print(f"🎯 Распарсенный сигнал: {signal}, SL: {stop_loss}, TP: {take_profit}")
                         
                         # Проверяем, изменился ли сигнал с последнего раза
                         last_signal = last_signals.get(symbol, {})
@@ -507,50 +619,76 @@ async def auto_analysis_handler():
                             'reason': reason[:100]  # Первые 100 символов для сравнения
                         }
                         
-                        # Отправляем только если сигнал изменился или это Buy/Sell (не No Trade)
-                        if (signal in ['BUY', 'SELL'] and 
-                            (symbol not in last_signals or 
-                             last_signals[symbol].get('signal') != signal or
-                             last_signals[symbol].get('stop_loss') != stop_loss or
-                             last_signals[symbol].get('take_profit') != take_profit)):
+                        # Простая проверка: отправляем ВСЕ сигналы (без фильтрации)
+                        # Трейдеры должны видеть каждое изменение!
+                        signal_should_send = True
+                        print(f"📤 Отправляю ВСЕ сигналы без фильтрации")
+                        
+                        if signal in ['BUY', 'SELL'] and signal_should_send:
                             
                             # Сохраняем текущий сигнал
                             last_signals[symbol] = current_signal_data
                             
                             # Отправляем график
-                            chart_file = types.BufferedInputFile(chart_bytes, filename=f"{symbol}_auto_{auto_analysis_timeframe}m.png")
-                            await bot.send_photo(
-                                auto_analysis_chat_id, 
-                                chart_file, 
-                                caption=f"🤖 Автоанализ {symbol} ({auto_analysis_timeframe}m)"
-                            )
+                            try:
+                                chart_file = types.BufferedInputFile(chart_bytes, filename=f"{symbol}_auto_{auto_analysis_timeframe}m.png")
+                                await send_with_retry(lambda: bot.send_photo(
+                                    auto_analysis_chat_id,
+                                    chart_file,
+                                    caption=f"🤖 Автоанализ {symbol} ({auto_analysis_timeframe}m)"
+                                ))
+                            except Exception as e:
+                                print(f"❌ Ошибка отправки графика: {e}")
                             
                             # Отправляем сигнал
                             reason = (reason or "").strip()
-                            if " | " in reason:
-                                reason_part, comment_part = reason.split(" | ", 1)
+                            
+                            # Ограничиваем длину анализа для предотвращения обрезания
+                            max_reason_length = 500  # Уменьшаем до 500 символов
+                            if len(reason) > max_reason_length:
+                                reason = reason[:max_reason_length] + "..."
+                            
+                            # Чистим разметку из причин/комментариев
+                            clean_reason = clean_field(reason)
+                            if " | " in clean_reason:
+                                reason_part, comment_part = clean_reason.split(" | ", 1)
                                 analysis_text = f"📝 Причина: {reason_part}\n💬 Комментарий: {comment_part}"
                             else:
-                                analysis_text = f"📝 Анализ: {reason}"
+                                analysis_text = f"📝 Анализ: {clean_reason}"
                             
-                            # Добавляем эмодзи в зависимости от сигнала
+                            # Добавляем эмодзи и силу сигнала (в заголовке жирным)
                             signal_emoji = "🟢📈" if signal == "BUY" else "🔴📉"
-                            signal_text = f"{signal_emoji} **АВТОСИГНАЛ {signal}**"
+                            strength = extract_strength(reason) or extract_strength(comment)
+                            if strength:
+                                signal_text = f"{signal_emoji} АВТОСИГНАЛ <b>{signal} · Сила {strength}</b>"
+                            else:
+                                signal_text = f"{signal_emoji} АВТОСИГНАЛ <b>{signal}</b>"
+                            
+                            # Очищаем поля от лишней markdown-разметки
+                            stop_clean = clean_field(stop_loss)
+                            take_clean = clean_field(take_profit)
                             
                             message_text = (
                                 f"{signal_text}\n"
                                 f"💰 Пара: {symbol}\n"
-                                f"🛑 Стоп: {stop_loss}\n"
-                                f"🎯 Тейк: {take_profit}\n"
+                                f"🛑 Стоп: <b>{stop_clean}</b>\n"
+                                f"🎯 Тейк: <b>{take_clean}</b>\n"
                                 f"{analysis_text}\n"
                                 f"🕐 {datetime.now().strftime('%H:%M:%S')}"
                             )
                             
-                            await bot.send_message(auto_analysis_chat_id, message_text)
+                            try:
+                                await send_with_retry(lambda: bot.send_message(auto_analysis_chat_id, message_text))
+                                print(f"✅ {signal} сигнал отправлен для {symbol}: {stop_loss} -> {take_profit}")
+                            except Exception as e:
+                                print(f"❌ Ошибка отправки {signal} сигнала: {e}")
+                                # Сохраняем сигнал даже если не удалось отправить
+                                last_signals[symbol] = current_signal_data
                             
                         elif signal == 'NO_TRADE':
-                            # Для No Trade просто обновляем last_signals без отправки
+                            # NO_TRADE не отправляем пользователю - только сохраняем в память
                             last_signals[symbol] = current_signal_data
+                            print(f"🔍 NO_TRADE сигнал (не отправляем) для {symbol}: {reason[:50]}...")
                         
                         break  # Берем только первый результат анализа
                         
@@ -562,8 +700,8 @@ async def auto_analysis_handler():
                 print(f"Ошибка автоанализа: {e}")
                 try:
                     await bot.send_message(auto_analysis_chat_id, f"❌ Ошибка автоанализа: {e}")
-                except:
-                    pass
+                except Exception as notify_err:
+                    print(f"[auto-analysis] failed to notify error: {notify_err}")
         
         if auto_analysis_active:
             print(f"⏰ Ожидание {auto_analysis_interval} секунд до следующего анализа...")
@@ -574,25 +712,14 @@ async def start_auto_analysis(chat_id: int):
     global auto_analysis_active, auto_analysis_chat_id
     
     if auto_analysis_active:
-        await bot.send_message(chat_id, "❌ Автоанализ уже активен!")
-        return
+        return False
     
     auto_analysis_active = True
     auto_analysis_chat_id = chat_id
     
-    symbols_text = ", ".join(auto_analysis_symbols)
-    await bot.send_message(
-        chat_id, 
-        f"🤖 Запускаю автоанализ!\n"
-        f"📊 Символ: {symbols_text}\n"
-        f"⏰ Интервал: каждые 6 минут\n"
-        f"📈 Таймфрейм: 5m графики\n"
-        f"🔗 Источник: Bybit API\n"
-        f"🎯 Google API: 240/250 запросов в день (96%)"
-    )
-    
-    # Запускаем обработчик
+    # Запускаем обработчик в фоне (без ожидания первого анализа)
     asyncio.create_task(auto_analysis_handler())
+    return True
 
 async def stop_auto_analysis():
     """Остановить автоматический анализ"""
@@ -600,157 +727,100 @@ async def stop_auto_analysis():
     auto_analysis_active = False
 
 def get_control_keyboard():
-    """Создать клавиатуру с кнопками управления"""
+    """Создать клавиатуру с кнопками управления (постоянная внизу)"""
     global auto_analysis_active
     
     if auto_analysis_active:
         # Если автоанализ активен - показываем кнопку "Остановить"
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🛑 Остановить автоанализ", callback_data="stop_analysis")],
-            [InlineKeyboardButton(text="📊 Статус", callback_data="show_status")]
-        ])
+        keyboard = ReplyKeyboardMarkup(
+            keyboard=[
+                [KeyboardButton(text="🛑 Остановить автоанализ")],
+                [KeyboardButton(text="📊 Статус")]
+            ],
+            resize_keyboard=True,
+            persistent=True
+        )
     else:
         # Если автоанализ не активен - показываем кнопку "Запустить"
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🚀 Запустить автоанализ", callback_data="start_analysis")],
-            [InlineKeyboardButton(text="📊 Статус", callback_data="show_status")]
-        ])
+        keyboard = ReplyKeyboardMarkup(
+            keyboard=[
+                [KeyboardButton(text="🚀 Запустить автоанализ")],
+                [KeyboardButton(text="📊 Статус")]
+            ],
+            resize_keyboard=True,
+            persistent=True
+        )
     
     return keyboard
 
-@dp.callback_query(F.data == "start_analysis")
-async def callback_start_analysis(callback: types.CallbackQuery):
+@dp.message(F.text == "🚀 Запустить автоанализ")
+async def message_start_analysis(message: types.Message):
     """Обработчик кнопки 'Запустить автоанализ'"""
-    await start_auto_analysis(callback.message.chat.id)
-    
-    # Обновляем сообщение с новой клавиатурой
-    await callback.message.edit_text(
-        "🤖 **Панель управления автоанализом**\n\n"
-        f"✅ Автоанализ запущен!\n"
-        f"📊 Символ: SOLUSDT\n"
-        f"⏰ Интервал: каждые 6 минут\n"
-        f"📈 Таймфрейм: 5m графики",
-        reply_markup=get_control_keyboard()
-    )
-    await callback.answer("✅ Автоанализ запущен!")
+    try:
+        # Быстро запускаем без ожидания
+        success = await start_auto_analysis(message.chat.id)
+        
+        if not success:
+            await message.answer("❌ Автоанализ уже активен!", reply_markup=get_control_keyboard())
+            return
+        
+        # Быстро отвечаем пользователю
+        new_text = (
+            "🤖 <b>Панель управления автоанализом</b>\n\n"
+            f"✅ Автоанализ запущен!\n"
+            f"📊 Символ: SOLUSDT\n"
+            f"⏰ Интервал: каждые 6 минут\n"
+            f"📈 Таймфрейм: 5m графики\n"
+            f"🔗 Источник: Bybit API\n\n"
+            f"💡 Первый анализ начнется через несколько секунд..."
+        )
+        
+        await message.answer(new_text, reply_markup=get_control_keyboard())
+            
+    except Exception as e:
+        await message.answer("❌ Ошибка запуска автоанализа", reply_markup=get_control_keyboard())
 
-@dp.callback_query(F.data == "stop_analysis")
-async def callback_stop_analysis(callback: types.CallbackQuery):
+@dp.message(F.text == "🛑 Остановить автоанализ")
+async def message_stop_analysis(message: types.Message):
     """Обработчик кнопки 'Остановить автоанализ'"""
     global auto_analysis_active, auto_analysis_chat_id
     
-    if auto_analysis_chat_id != callback.message.chat.id:
-        await callback.answer("❌ Автоанализ запущен в другом чате!", show_alert=True)
-        return
-    
-    await stop_auto_analysis()
-    
-    # Обновляем сообщение с новой клавиатурой
-    await callback.message.edit_text(
-        "🤖 **Панель управления автоанализом**\n\n"
-        f"⏹️ Автоанализ остановлен\n"
-        f"📊 Символ: SOLUSDT\n"
-        f"⏰ Готов к запуску",
-        reply_markup=get_control_keyboard()
-    )
-    await callback.answer("⏹️ Автоанализ остановлен!")
-
-@dp.callback_query(F.data == "show_status")
-async def callback_show_status(callback: types.CallbackQuery):
-    """Обработчик кнопки 'Статус'"""
-    global auto_analysis_active, auto_analysis_symbols, last_signals
-    
-    if auto_analysis_active:
-        status_text = (
-            "🤖 **Панель управления автоанализом**\n\n"
-            f"✅ Статус: АКТИВЕН\n"
-            f"📊 Символ: {', '.join(auto_analysis_symbols)}\n"
-            f"⏰ Интервал: каждые 6 минут\n"
-            f"📈 Таймфрейм: 5m графики\n"
-            f"💾 Сигналов в памяти: {len(last_signals)}\n"
-            f"🔗 Источник: Bybit API"
-        )
-    else:
-        status_text = (
-            "🤖 **Панель управления автоанализом**\n\n"
-            f"⏹️ Статус: ОСТАНОВЛЕН\n"
-            f"📊 Символ: {', '.join(auto_analysis_symbols)}\n"
+    try:
+        if auto_analysis_chat_id != message.chat.id:
+            await message.answer("❌ Автоанализ запущен в другом чате!")
+            return
+        
+        await stop_auto_analysis()
+        
+        # Отправляем сообщение с новой клавиатурой
+        new_text = (
+            "🤖 <b>Панель управления автоанализом</b>\n\n"
+            f"⏹️ Автоанализ остановлен\n"
+            f"📊 Символ: SOLUSDT\n"
             f"⏰ Готов к запуску"
         )
-    
-    await callback.message.edit_text(status_text, reply_markup=get_control_keyboard())
-    await callback.answer("📊 Статус обновлен")
+        
+        await message.answer(new_text, reply_markup=get_control_keyboard())
+            
+    except Exception as e:
+        await message.answer("❌ Ошибка остановки автоанализа")
 
-@dp.message(Command("stats"))
-async def cmd_stats(message: types.Message):
-    """Показать статистику запросов"""
-    # Проверяем и сбрасываем счетчик Google если нужно
-    if should_reset_google_counter():
-        reset_google_counter()
-    
-    if not request_log:
-        await message.answer("📊 Статистика пуста - запросов еще не было")
-        return
-    
-    # Подсчет по провайдерам
-    providers = {}
-    successful = 0
-    failed = 0
-    
-    for log in request_log:
-        provider = log["provider"]
-        if provider not in providers:
-            providers[provider] = {"success": 0, "failed": 0}
-        
-        if log["success"]:
-            providers[provider]["success"] += 1
-            successful += 1
-        else:
-            providers[provider]["failed"] += 1
-            failed += 1
-    
-    # Формируем ответ
-    stats_text = f"📊 **Статистика запросов**\n\n"
-    stats_text += f"🔢 **Всего запросов:** {request_count}\n"
-    stats_text += f"✅ **Успешных:** {successful}\n"
-    stats_text += f"❌ **Неудачных:** {failed}\n\n"
-    
-    stats_text += "📈 **По провайдерам:**\n"
-    for provider, counts in providers.items():
-        total = counts["success"] + counts["failed"]
-        success_rate = (counts["success"] / total * 100) if total > 0 else 0
-        
-        # Получаем лимиты для провайдера
-        limits = GOOGLE_LIMITS if provider == "google" else {}
-        if limits:
-            daily_limit = limits.get("daily", 0)
-            monthly_limit = limits.get("monthly", 0)
-            period = limits.get("period", "день")
-            
-            # Рассчитываем использование
-            if period == "день":
-                usage_percent = (total / daily_limit * 100) if daily_limit > 0 else 0
-                limit_text = f"({total}/{daily_limit} в день, {usage_percent:.1f}%)"
-            else:
-                usage_percent = (total / monthly_limit * 100) if monthly_limit > 0 else 0
-                limit_text = f"({total}/{monthly_limit} в месяц, {usage_percent:.1f}%)"
-            
-            stats_text += f"• **{provider}:** {total} ({counts['success']}✅/{counts['failed']}❌) - {success_rate:.1f}% {limit_text}\n"
-        else:
-            stats_text += f"• **{provider}:** {total} ({counts['success']}✅/{counts['failed']}❌) - {success_rate:.1f}%\n"
-    
-    # Последние 5 запросов
-    stats_text += f"\n🕒 **Последние 5 запросов:**\n"
-    for log in request_log[-5:]:
-        status = "✅" if log["success"] else "❌"
-        stats_text += f"{status} {log['timestamp']} - {log['provider']}/{log['model']}\n"
-    
-    # Добавляем ссылки на проверку лимитов
-    stats_text += f"\n🔗 **Проверить лимиты:**\n"
-    stats_text += f"• [Google AI Studio](https://aistudio.google.com/usage?project=carbon-crossing-470508-p7)\n"
-    stats_text += f"  🕐 Сброс: полночь PT (UTC-8)\n"
-    
-    await message.answer(stats_text)
+@dp.message(F.text == "📊 Статус")
+async def message_show_status(message: types.Message):
+    """Обработчик кнопки 'Статус' — теперь показывает Health"""
+    try:
+        text = await build_health_text()
+        await message.answer(text, reply_markup=get_control_keyboard())
+    except Exception:
+        await message.answer("❌ Ошибка получения статуса")
+
+## Removed /stats in favor of Status button
+
+@dp.message(Command("health"))
+async def cmd_health(message: types.Message):
+    """Показать состояние сервисов: Telegram, Bybit, Google, автоанализ"""
+    text = await build_health_text()
+    await message.answer(text)
 
 @dp.message(Command("start"))
 async def start_cmd(message: types.Message):
@@ -759,8 +829,8 @@ async def start_cmd(message: types.Message):
     
     if auto_analysis_active:
         status_text = (
-            "🤖 **Панель управления автоанализом**\n\n"
-            f"✅ Статус: АКТИВЕН\n"
+            "🤖 <b>Панель управления автоанализом</b>\n\n"
+            f"✅ Статус: <b>АКТИВЕН</b>\n"
             f"📊 Символ: SOLUSDT\n"
             f"⏰ Интервал: каждые 6 минут\n"
             f"📈 Таймфрейм: 5m графики\n"
@@ -769,8 +839,8 @@ async def start_cmd(message: types.Message):
         )
     else:
         status_text = (
-            "🤖 **Панель управления автоанализом**\n\n"
-            f"⏹️ Статус: ОСТАНОВЛЕН\n"
+            "🤖 <b>Панель управления автоанализом</b>\n\n"
+            f"⏹️ Статус: <b>ОСТАНОВЛЕН</b>\n"
             f"📊 Символ: SOLUSDT (Solana)\n"
             f"⏰ Готов к запуску\n\n"
             f"🎯 Нажмите кнопку ниже чтобы запустить автоматические торговые сигналы!"
@@ -811,7 +881,7 @@ async def handle_photo(message: types.Message):
         lines.append(block)
 
     reply = "\n\n".join(lines) if lines else "Ошибка анализа: пустой ответ"
-    
+
     # Разбиваем длинные сообщения
     if len(reply) <= 4000:
         await message.answer(reply)
@@ -843,8 +913,8 @@ if __name__ == "__main__":
         # Удаляем активный вебхук, чтобы можно было использовать getUpdates (long polling)
         try:
             await bot.delete_webhook(drop_pending_updates=True)
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[startup] delete_webhook failed: {e}")
         
         try:
             await dp.start_polling(bot)
