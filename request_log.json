@@ -1,191 +1,65 @@
 [
   {
-    "timestamp": "2025-09-29 10:39:03",
+    "timestamp": "2025-10-02 15:54:16",
     "provider": "google",
     "model": "gemini-2.5-flash",
     "success": false,
-    "count": 19
+    "count": 28
   },
   {
-    "timestamp": "2025-09-29 10:40:38",
+    "timestamp": "2025-10-02 15:55:07",
     "provider": "google",
     "model": "gemini-2.5-flash",
-    "success": false,
-    "count": 20
+    "success": true,
+    "count": 29
   },
   {
-    "timestamp": "2025-09-29 10:47:10",
+    "timestamp": "2025-10-02 16:06:26",
     "provider": "google",
     "model": "gemini-2.5-flash",
-    "success": false,
-    "count": 21
+    "success": true,
+    "count": 3
   },
   {
-    "timestamp": "2025-09-29 10:48:46",
+    "timestamp": "2025-10-02 16:07:05",
     "provider": "google",
     "model": "gemini-2.5-flash",
-    "success": false,
+    "success": true,
     "count": 4
   },
   {
-    "timestamp": "2025-09-29 10:53:55",
+    "timestamp": "2025-10-02 16:08:09",
     "provider": "google",
     "model": "gemini-2.5-flash",
-    "success": false,
+    "success": true,
     "count": 5
   },
   {
-    "timestamp": "2025-09-29 10:56:19",
+    "timestamp": "2025-10-02 16:10:07",
     "provider": "google",
     "model": "gemini-2.5-flash",
-    "success": false,
+    "success": true,
     "count": 6
   },
   {
-    "timestamp": "2025-09-29 10:58:39",
+    "timestamp": "2025-10-02 16:10:57",
     "provider": "google",
     "model": "gemini-2.5-flash",
-    "success": false,
+    "success": true,
     "count": 7
   },
   {
-    "timestamp": "2025-09-29 11:02:09",
+    "timestamp": "2025-10-02 16:11:56",
     "provider": "google",
     "model": "gemini-2.5-flash",
-    "success": false,
+    "success": true,
     "count": 8
   },
   {
-    "timestamp": "2025-09-29 11:05:15",
+    "timestamp": "2025-10-02 17:02:38",
     "provider": "google",
     "model": "gemini-2.5-flash",
-    "success": false,
+    "success": true,
     "count": 9
-  },
-  {
-    "timestamp": "2025-09-29 11:07:51",
-    "provider": "google",
-    "model": "gemini-2.5-flash",
-    "success": false,
-    "count": 10
-  },
-  {
-    "timestamp": "2025-09-29 11:09:55",
-    "provider": "google",
-    "model": "gemini-2.5-flash",
-    "success": false,
-    "count": 11
-  },
-  {
-    "timestamp": "2025-09-29 11:12:02",
-    "provider": "google",
-    "model": "gemini-2.5-flash",
-    "success": false,
-    "count": 12
-  },
-  {
-    "timestamp": "2025-09-29 11:17:50",
-    "provider": "google",
-    "model": "gemini-2.5-flash",
-    "success": false,
-    "count": 13
-  },
-  {
-    "timestamp": "2025-09-29 11:19:34",
-    "provider": "google",
-    "model": "gemini-2.5-flash",
-    "success": false,
-    "count": 14
-  },
-  {
-    "timestamp": "2025-09-29 11:20:04",
-    "provider": "google",
-    "model": "gemini-2.5-flash",
-    "success": true,
-    "count": 15
-  },
-  {
-    "timestamp": "2025-09-29 11:23:06",
-    "provider": "google",
-    "model": "gemini-2.5-flash",
-    "success": false,
-    "count": 16
-  },
-  {
-    "timestamp": "2025-09-29 11:24:52",
-    "provider": "google",
-    "model": "gemini-2.5-flash",
-    "success": false,
-    "count": 17
-  },
-  {
-    "timestamp": "2025-09-29 11:26:50",
-    "provider": "google",
-    "model": "gemini-2.5-flash",
-    "success": false,
-    "count": 18
-  },
-  {
-    "timestamp": "2025-09-29 11:29:34",
-    "provider": "google",
-    "model": "gemini-2.5-flash",
-    "success": true,
-    "count": 19
-  },
-  {
-    "timestamp": "2025-09-29 11:31:32",
-    "provider": "google",
-    "model": "gemini-2.5-flash",
-    "success": false,
-    "count": 20
-  },
-  {
-    "timestamp": "2025-09-29 12:20:46",
-    "provider": "google",
-    "model": "gemini-2.5-flash",
-    "success": true,
-    "count": 21
-  },
-  {
-    "timestamp": "2025-09-29 12:21:49",
-    "provider": "google",
-    "model": "gemini-2.5-flash",
-    "success": true,
-    "count": 22
-  },
-  {
-    "timestamp": "2025-09-29 12:33:53",
-    "provider": "google",
-    "model": "gemini-2.5-flash",
-    "success": false,
-    "count": 23
-  },
-  {
-    "timestamp": "2025-09-29 12:45:54",
-    "provider": "google",
-    "model": "gemini-2.5-flash",
-    "success": true,
-    "count": 24
-  },
-  {
-    "timestamp": "2025-09-29 13:04:33",
-    "provider": "google",
-    "model": "gemini-2.5-flash",
-    "success": true,
-    "count": 25
-  },
-  {
-    "timestamp": "2025-09-29 14:52:06",
-    "provider": "google",
-    "model": "gemini-2.5-flash",
-    "success": true,
-    "count": 26
-  },
-  {
-    "timestamp": "2025-09-29 14:54:08",
-    "provider": "google",
-    "model": "gemini-2.5-flash",
-    "success": true,
-    "count": 27
   }
 ]
